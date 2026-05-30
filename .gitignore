@@ -1,6 +1,19 @@
+# Environment files
 .env
+.env.*
+!.env.example
+
+# Python
 venv/
 __pycache__/
 *.pyc
+
+# IDE
 .vscode/
 .idea/
+
+# Database
+backend/data/*.db
+
+# Archives
+*.zip

@@ -3,6 +3,7 @@ services:
   backend:
     build: ./backend
     container_name: fastapi-backend
+    restart: unless-stopped
 
     ports:
       - "8000:8000"
@@ -10,12 +11,26 @@ services:
     env_file:
       - .env
 
+    volumes:
+      # Persist the SQLite database (chat history) across restarts.
+      - ./backend/data:/app/data
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   frontend:
     build: ./frontend
-    container_name: streamlit-frontend
+    container_name: chat-frontend
+    restart: unless-stopped
 
     ports:
-      - "8501:8501"
+      # Open the app at http://localhost:8501  (nginx listens on 80 inside)
+      - "8501:80"
 
     depends_on:
-      - backend
+      backend:
+        condition: service_started
