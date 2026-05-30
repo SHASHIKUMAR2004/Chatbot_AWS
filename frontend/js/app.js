@@ -104,10 +104,7 @@
       copy.className = "code-copy";
       copy.innerHTML = copyIcon() + "<span>Copy</span>";
       copy.addEventListener("click", () => {
-        navigator.clipboard.writeText(code.textContent).then(() => {
-          copy.querySelector("span").textContent = "Copied!";
-          setTimeout(() => (copy.querySelector("span").textContent = "Copy"), 1500);
-        });
+        copyText(code.textContent).then((ok) => copyFeedback(copy, ok));
       });
       head.appendChild(copy);
 
@@ -122,6 +119,42 @@
 
   const copyIcon = () =>
     '<svg viewBox="0 0 24 24" width="14" height="14"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+
+  // Robust clipboard copy. The async Clipboard API only works in a secure
+  // context (https or http://localhost). When the app is opened over a LAN IP
+  // it is unavailable, so we fall back to a hidden-textarea + execCommand.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
+    }
+    return Promise.resolve(fallbackCopy(text));
+  }
+
+  function fallbackCopy(text) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-9999px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function copyFeedback(btn, ok) {
+    const span = btn.querySelector("span");
+    if (!span) return;
+    span.textContent = ok ? "Copied!" : "Press Ctrl+C";
+    setTimeout(() => (span.textContent = "Copy"), 1500);
+  }
 
   // ---------- API ----------
   async function api(path, opts = {}) {
@@ -465,10 +498,7 @@
     copy.className = "msg__action";
     copy.innerHTML = copyIcon() + "<span>Copy</span>";
     copy.addEventListener("click", () => {
-      navigator.clipboard.writeText(m.content).then(() => {
-        copy.querySelector("span").textContent = "Copied!";
-        setTimeout(() => (copy.querySelector("span").textContent = "Copy"), 1500);
-      });
+      copyText(m.content).then((ok) => copyFeedback(copy, ok));
     });
     actions.appendChild(copy);
 
