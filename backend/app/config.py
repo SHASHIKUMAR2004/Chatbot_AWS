@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     # The assistant's display name. Change this to rebrand the whole app.
-    assistant_name: str = "ChatBot"
+    assistant_name: str = "Shashi's Bot"
     app_name: str = "ChatBot API"
     app_version: str = "2.1.0"
     debug: bool = False
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     max_history_messages: int = 30
 
     # --- File uploads / document context ---
-    max_upload_mb: int = 20          # reject files larger than this
+    max_upload_mb: int = 100         # reject files larger than this
     max_doc_chars: int = 16000       # truncate each extracted document to this
     max_context_chars: int = 48000   # cap on combined attachment text per request
 
