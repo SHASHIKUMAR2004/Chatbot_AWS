@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     max_history_messages: int = 30
 
     # --- File uploads / document context ---
-    max_upload_mb: int = 100         # reject files larger than this
+    max_upload_mb: int = 100         # reject files larger than this        # reject files larger than this
     max_doc_chars: int = 16000       # truncate each extracted document to this
     max_context_chars: int = 48000   # cap on combined attachment text per request
 
