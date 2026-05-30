@@ -185,7 +185,7 @@
       const icon = a.uploading
         ? '<span class="spinner"></span>'
         : a.isImage && a.preview
-        ? `<img class="attach-chip__thumb" src="${a.preview}" alt="">`
+        ? `<img class="attach-chip__thumb" src="${a.preview}" alt="" style="width:22px;height:22px;border-radius:5px;object-fit:cover;display:block">`
         : fileIcon();
       chip.innerHTML =
         `<span class="attach-chip__icon">${icon}</span>` +
@@ -245,6 +245,31 @@
         toast(`${file.name}: ${err.message}`, true);
       }
     }
+  }
+
+  // Paste an image straight from the clipboard (Ctrl/Cmd+V).
+  function handlePaste(e) {
+    const items = (e.clipboardData || window.clipboardData)?.items;
+    if (!items) return;
+    const files = [];
+    for (const it of items) {
+      if (it.kind === "file" && (it.type || "").startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length) {
+      e.preventDefault(); // don't also paste the image's file path as text
+      uploadFiles(files);
+    }
+  }
+
+  // Drag-and-drop files anywhere onto the app.
+  function handleDrop(e) {
+    e.preventDefault();
+    el.app.classList.remove("drag-over");
+    const dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length) uploadFiles(dt.files);
   }
 
   // ---------- Theme ----------
@@ -495,7 +520,7 @@
         if (a.isImage && a.preview) {
           const fig = document.createElement("span");
           fig.className = "msg__image";
-          fig.innerHTML = `<img src="${a.preview}" alt="${esc(a.name)}">`;
+          fig.innerHTML = `<img src="${a.preview}" alt="${esc(a.name)}" style="max-width:260px;max-height:260px;width:auto;height:auto;border-radius:10px;border:1px solid var(--border);display:block;object-fit:contain">`;
           files.appendChild(fig);
         } else {
           const f = document.createElement("span");
@@ -784,6 +809,20 @@
       uploadFiles(e.target.files);
       el.fileInput.value = ""; // allow re-selecting the same file
     });
+
+    // Paste an image from the clipboard (Ctrl/Cmd+V). Bound once on document;
+    // it bubbles up from the textarea, so binding both would double-fire.
+    document.addEventListener("paste", handlePaste);
+
+    // Drag-and-drop images/files anywhere onto the window.
+    window.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      el.app.classList.add("drag-over");
+    });
+    window.addEventListener("dragleave", (e) => {
+      if (e.relatedTarget === null) el.app.classList.remove("drag-over");
+    });
+    window.addEventListener("drop", handleDrop);
 
     el.input.addEventListener("input", autoGrow);
     el.input.addEventListener("keydown", (e) => {
