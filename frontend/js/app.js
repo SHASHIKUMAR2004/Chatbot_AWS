@@ -182,8 +182,13 @@
     list.forEach((a) => {
       const chip = document.createElement("div");
       chip.className = "attach-chip" + (a.uploading ? " is-uploading" : "");
+      const icon = a.uploading
+        ? '<span class="spinner"></span>'
+        : a.isImage && a.preview
+        ? `<img class="attach-chip__thumb" src="${a.preview}" alt="">`
+        : fileIcon();
       chip.innerHTML =
-        `<span class="attach-chip__icon">${a.uploading ? '<span class="spinner"></span>' : fileIcon()}</span>` +
+        `<span class="attach-chip__icon">${icon}</span>` +
         `<span class="attach-chip__name">${esc(a.filename)}</span>`;
       if (!a.uploading) {
         const x = document.createElement("button");
@@ -207,7 +212,14 @@
     const files = [...fileList];
     if (!files.length) return;
     for (const file of files) {
-      const entry = { id: null, filename: file.name, uploading: true };
+      const isImage = (file.type || "").startsWith("image/");
+      const entry = {
+        id: null,
+        filename: file.name,
+        uploading: true,
+        isImage,
+        preview: isImage ? URL.createObjectURL(file) : null,
+      };
       state.pendingAttachments.push(entry);
       renderAttachments();
       try {
@@ -223,6 +235,7 @@
         entry.id = data.id;
         entry.uploading = false;
         entry.truncated = data.truncated;
+        if (data.kind) entry.isImage = data.kind === "image";
         renderAttachments();
         if (data.truncated) {
           toast(`"${file.name}" was large — using the first part only.`);
@@ -472,15 +485,24 @@
 
     body.append(role, content);
 
-    // Show attached file chips beneath a user message.
+    // Show attached files (image thumbnails or file chips) under a user message.
     if (m.role === "user" && m.attachments && m.attachments.length) {
       const files = document.createElement("div");
       files.className = "msg__files";
-      m.attachments.forEach((name) => {
-        const f = document.createElement("span");
-        f.className = "msg__file";
-        f.innerHTML = fileIcon() + `<span>${esc(name)}</span>`;
-        files.appendChild(f);
+      m.attachments.forEach((att) => {
+        // Support both legacy string names and {name,isImage,preview} objects.
+        const a = typeof att === "string" ? { name: att } : att;
+        if (a.isImage && a.preview) {
+          const fig = document.createElement("span");
+          fig.className = "msg__image";
+          fig.innerHTML = `<img src="${a.preview}" alt="${esc(a.name)}">`;
+          files.appendChild(fig);
+        } else {
+          const f = document.createElement("span");
+          f.className = "msg__file";
+          f.innerHTML = fileIcon() + `<span>${esc(a.name)}</span>`;
+          files.appendChild(f);
+        }
       });
       body.appendChild(files);
     }
@@ -544,13 +566,17 @@
     el.welcome.style.display = "none";
 
     const attachmentIds = ready.map((a) => a.id);
-    const attachmentNames = ready.map((a) => a.filename);
+    const attachmentMeta = ready.map((a) => ({
+      name: a.filename,
+      isImage: !!a.isImage,
+      preview: a.preview || null,
+    }));
     // Clear the composer's pending attachments now that they're sent.
     state.pendingAttachments = [];
     renderAttachments();
 
     // Optimistic user message
-    const userMsg = { role: "user", content: text, attachments: attachmentNames };
+    const userMsg = { role: "user", content: text, attachments: attachmentMeta };
     state.messages.push(userMsg);
     el.messages.appendChild(messageEl(userMsg));
 

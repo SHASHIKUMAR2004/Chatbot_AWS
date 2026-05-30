@@ -50,14 +50,37 @@ _FALLBACK_MODELS: List[Dict[str, str]] = [
     },
     {
         "id": "groq/compound",
-        "name": "Groq Compound",
+        "name": "Groq Compound (web search)",
         "description": "Agentic system with built-in web search + code exec.",
+    },
+]
+
+# Compound systems offer built-in web search + code execution. They are always
+# offered in the dropdown even if the live /models call omits them.
+_COMPOUND_SYSTEMS: List[Dict[str, str]] = [
+    {
+        "id": "groq/compound",
+        "name": "Groq Compound (web search)",
+        "description": "Searches the web automatically, with citations.",
+    },
+    {
+        "id": "groq/compound-mini",
+        "name": "Groq Compound Mini (web search)",
+        "description": "Faster, lighter web-search system.",
     },
 ]
 
 # Models returned by the live endpoint that are not chat-completion models.
 _NON_CHAT_PREFIXES = ("whisper", "playai", "distil-whisper", "orpheus")
 _NON_CHAT_SUBSTR = ("guard", "tts", "whisper", "orpheus")
+
+# Substrings identifying vision-capable (multimodal) models on Groq.
+_VISION_SUBSTR = ("llama-4", "scout", "maverick", "vision", "llava")
+
+
+def is_vision_model(model_id: str) -> bool:
+    mid = (model_id or "").lower()
+    return any(s in mid for s in _VISION_SUBSTR)
 
 _client = None
 
@@ -110,6 +133,13 @@ def list_models() -> List[Dict[str, object]]:
     if not models:
         models = [dict(m) for m in _FALLBACK_MODELS]
 
+    # Compound "systems" (web search + code exec) are not always returned by
+    # the live /models endpoint, so make sure they're offered regardless.
+    present = {m["id"] for m in models}
+    for compound in _COMPOUND_SYSTEMS:
+        if compound["id"] not in present:
+            models.append(dict(compound))
+
     # Ensure default is present and flag it.
     if settings.default_model not in {m["id"] for m in models}:
         models.insert(
@@ -156,18 +186,41 @@ def stream_chat(
             yield delta
 
 
-def _demo_stream(messages: List[Dict[str, str]]) -> Iterator[str]:
+def _demo_stream(messages: List[Dict[str, object]]) -> Iterator[str]:
     """Stream a friendly placeholder response when no API key is set."""
-    last_user = next(
+    # The last user message content may be a string OR a list of parts
+    # (text + image_url) when images are attached.
+    last_user_raw = next(
         (m["content"] for m in reversed(messages) if m["role"] == "user"),
         "",
     )
+    has_image = False
+    if isinstance(last_user_raw, list):
+        texts = [p.get("text", "") for p in last_user_raw if p.get("type") == "text"]
+        has_image = any(p.get("type") == "image_url" for p in last_user_raw)
+        last_user = " ".join(texts)
+    else:
+        last_user = last_user_raw
+
+    if has_image:
+        text = (
+            f"**Demo mode** — I received your image and would analyze it with a "
+            f"vision model (`{settings.vision_model}`). Add a `GROQ_API_KEY` to get "
+            "a real description and answers about the picture.\n\n"
+            f"_You asked:_ {last_user[:200] or '(describe the image)'}"
+        )
+        for token in _tokenize(text):
+            time.sleep(0.01)
+            yield token
+        return
+
     # Detect injected document context so demo mode can prove uploads work.
     doc_ctx = next(
         (
             m["content"]
             for m in messages
             if m["role"] == "system"
+            and isinstance(m["content"], str)
             and m["content"].startswith("The user has attached")
         ),
         None,

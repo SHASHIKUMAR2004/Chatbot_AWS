@@ -21,6 +21,7 @@ class ChatRequest(BaseModel):
 class AttachmentOut(BaseModel):
     id: str
     filename: str
+    kind: str = "text"
     chars: int
     truncated: bool = False
 

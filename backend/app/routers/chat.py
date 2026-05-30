@@ -25,12 +25,41 @@ def _sse(event: dict) -> str:
 def _build_messages(db: Session, conversation_id: str, system_prompt: str | None):
     system = system_prompt or settings.effective_system_prompt
     msgs = [{"role": "system", "content": system}]
-    # Inject any attached-document context as a second system message.
+    # Inject any attached-document text as a second system message.
     doc_context = crud.build_document_context(db, conversation_id)
     if doc_context:
         msgs.append({"role": "system", "content": doc_context})
     msgs.extend(crud.history_for_llm(db, conversation_id))
-    return msgs
+
+    # Attach images (if any) to the most recent user message as image_url parts
+    # so a vision model can see them.
+    images = crud.image_attachments_for_conversation(
+        db, conversation_id, settings.max_images_per_request
+    )
+    if images:
+        for m in reversed(msgs):
+            if m["role"] == "user":
+                parts = [{"type": "text", "text": m["content"]}]
+                for img in images:
+                    parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{img.mime or 'image/jpeg'};base64,{img.content}"
+                            },
+                        }
+                    )
+                m["content"] = parts
+                break
+    return msgs, bool(images)
+
+
+def _resolve_model(requested: str | None, has_images: bool) -> str:
+    """Pick the model to call. Force a vision model when images are present."""
+    model = requested or settings.default_model
+    if has_images and not llm.is_vision_model(model):
+        return settings.vision_model
+    return model
 
 
 @router.get("/models", response_model=list[ModelInfo])
@@ -67,7 +96,8 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
     # Persist the user's message, then assemble the LLM context.
     crud.add_message(db, conversation_id, "user", payload.message, model=None)
     crud.link_attachments(db, payload.attachment_ids, conversation_id)
-    messages = _build_messages(db, conversation_id, payload.system_prompt)
+    messages, has_images = _build_messages(db, conversation_id, payload.system_prompt)
+    model = _resolve_model(payload.model, has_images)
     temperature = (
         payload.temperature
         if payload.temperature is not None
@@ -132,7 +162,8 @@ def chat_legacy(payload: ChatRequest, db: Session = Depends(get_db)):
 
     crud.add_message(db, convo.id, "user", payload.message)
     crud.link_attachments(db, payload.attachment_ids, convo.id)
-    messages = _build_messages(db, convo.id, payload.system_prompt)
+    messages, has_images = _build_messages(db, convo.id, payload.system_prompt)
+    model = _resolve_model(payload.model, has_images)
     temperature = (
         payload.temperature
         if payload.temperature is not None

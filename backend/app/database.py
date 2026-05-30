@@ -85,7 +85,9 @@ class Attachment(Base):
         ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=True
     )
     filename: Mapped[str] = mapped_column(String(255))
-    content: Mapped[str] = mapped_column(Text)            # extracted plain text
+    content: Mapped[str] = mapped_column(Text)            # extracted text OR base64 image
+    kind: Mapped[str] = mapped_column(String(10), default="text")   # "text" | "image"
+    mime: Mapped[str | None] = mapped_column(String(80), nullable=True)
     chars: Mapped[int] = mapped_column(Integer, default=0)
     truncated: Mapped[int] = mapped_column(Integer, default=0)  # 0/1 flag
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -117,6 +119,32 @@ def init_db() -> None:
         if directory:
             os.makedirs(directory, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite()
+
+
+def _migrate_sqlite() -> None:
+    """Add columns introduced after a DB was first created (SQLite only).
+
+    create_all() never alters existing tables, so older databases miss the
+    newer attachment columns. This adds them in-place if absent — safe to run
+    on every startup.
+    """
+    if not settings.database_url.startswith("sqlite"):
+        return
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine)
+        if "attachments" not in inspector.get_table_names():
+            return
+        existing = {c["name"] for c in inspector.get_columns("attachments")}
+        with engine.begin() as conn:
+            if "kind" not in existing:
+                conn.execute(text("ALTER TABLE attachments ADD COLUMN kind VARCHAR(10) DEFAULT 'text'"))
+            if "mime" not in existing:
+                conn.execute(text("ALTER TABLE attachments ADD COLUMN mime VARCHAR(80)"))
+    except Exception:  # pragma: no cover - best effort
+        pass
 
 
 def get_db():

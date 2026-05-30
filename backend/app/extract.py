@@ -27,6 +27,70 @@ class ExtractionError(Exception):
     """Raised when a file cannot be turned into usable text."""
 
 
+# Image extensions handled via the vision path (not text extraction).
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+
+
+def is_image(filename: str) -> bool:
+    return _ext(filename) in _IMAGE_EXTS
+
+
+def prepare_image(data: bytes) -> tuple[str, str]:
+    """Downscale/recompress an uploaded image and return (base64_str, mime).
+
+    Groq caps a base64 image at ~4MB and 33 megapixels, so we shrink the
+    longest side and re-encode as JPEG, stepping quality/size down until it
+    fits comfortably. Raises ExtractionError on unreadable images.
+    """
+    try:
+        from PIL import Image
+    except Exception as exc:  # pragma: no cover
+        raise ExtractionError("Image support is not installed on the server.") from exc
+
+    import base64
+    import io
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception as exc:
+        raise ExtractionError("Could not read this image (it may be corrupt).") from exc
+
+    # Flatten transparency onto white so we can save as JPEG.
+    if img.mode in ("RGBA", "LA", "P"):
+        img = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[-1])
+        img = bg
+    else:
+        img = img.convert("RGB")
+
+    # Downscale the longest side.
+    max_dim = settings.max_image_dim
+    if max(img.size) > max_dim:
+        ratio = max_dim / max(img.size)
+        img = img.resize((int(img.width * ratio), int(img.height * ratio)))
+
+    limit_bytes = int(settings.max_image_b64_mb * 1024 * 1024)
+    quality = 85
+    while True:
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        raw = buf.getvalue()
+        # base64 inflates size by ~4/3; check the encoded length.
+        if len(raw) * 4 / 3 <= limit_bytes or quality <= 35:
+            if len(raw) * 4 / 3 > limit_bytes:
+                # Still too big at low quality — shrink dimensions and retry.
+                img = img.resize((int(img.width * 0.8), int(img.height * 0.8)))
+                quality = 85
+                continue
+            break
+        quality -= 15
+
+    b64 = base64.b64encode(raw).decode("ascii")
+    return b64, "image/jpeg"
+
+
 def _ext(filename: str) -> str:
     name = (filename or "").lower()
     dot = name.rfind(".")

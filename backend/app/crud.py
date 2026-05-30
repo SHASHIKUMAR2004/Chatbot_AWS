@@ -123,13 +123,17 @@ def create_attachment(
     db: Session,
     filename: str,
     content: str,
+    kind: str = "text",
+    mime: Optional[str] = None,
     truncated: bool = False,
     conversation_id: Optional[str] = None,
 ) -> Attachment:
     att = Attachment(
         filename=filename[:255],
         content=content,
-        chars=len(content),
+        kind=kind,
+        mime=mime,
+        chars=len(content) if kind == "text" else 0,
         truncated=1 if truncated else 0,
         conversation_id=conversation_id,
     )
@@ -168,10 +172,29 @@ def attachments_for_conversation(
     return list(db.scalars(stmt))
 
 
+def image_attachments_for_conversation(
+    db: Session, conversation_id: str, limit: int
+) -> List[Attachment]:
+    """Most recent image attachments for a conversation (newest last)."""
+    stmt = (
+        select(Attachment)
+        .where(Attachment.conversation_id == conversation_id)
+        .where(Attachment.kind == "image")
+        .order_by(Attachment.created_at.desc())
+        .limit(limit)
+    )
+    rows = list(db.scalars(stmt))
+    rows.reverse()
+    return rows
+
+
 def build_document_context(db: Session, conversation_id: str) -> Optional[str]:
-    """Combine all attachment text for a conversation into one context block,
-    capped at settings.max_context_chars."""
-    atts = attachments_for_conversation(db, conversation_id)
+    """Combine all attached *text* documents into one context block,
+    capped at settings.max_context_chars. Images are handled separately."""
+    atts = [
+        a for a in attachments_for_conversation(db, conversation_id)
+        if a.kind == "text"
+    ]
     if not atts:
         return None
     parts: List[str] = []
