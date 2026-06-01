@@ -93,7 +93,7 @@
   }
 
   // Post-process a rendered content node: wrap code blocks + highlight.
-  function enhanceCode(node) {
+  function enhanceCode(node, withMath = true) {
     node.querySelectorAll("pre > code").forEach((code) => {
       const pre = code.parentElement;
       if (pre.parentElement.classList.contains("code-block")) return;
@@ -120,6 +120,25 @@
         try { hljs.highlightElement(code); } catch (_) {}
       }
     });
+    if (withMath) renderMath(node);
+  }
+
+  // Render LaTeX math (inline $...$ / \(...\) and display $$...$$ / \[...\])
+  // using KaTeX's auto-render. Skips code blocks so code isn't mangled.
+  function renderMath(node) {
+    if (!window.renderMathInElement) return;
+    try {
+      window.renderMathInElement(node, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "\\[", right: "\\]", display: true },
+          { left: "\\(", right: "\\)", display: false },
+          { left: "$", right: "$", display: false },
+        ],
+        ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+        throwOnError: false,
+      });
+    } catch (_) {}
   }
 
   const copyIcon = () =>
@@ -686,11 +705,13 @@
     let acc = "";
     let firstToken = true;
     let renderQueued = false;
+    let streamDone = false; // once true, a queued flush must not run
 
     const flush = () => {
       renderQueued = false;
+      if (streamDone) return; // final render already happened; don't clobber math
       contentNode.innerHTML = renderMarkdown(acc);
-      enhanceCode(contentNode);
+      enhanceCode(contentNode, false); // skip math mid-stream; render once at end
       contentNode.classList.add("cursor");
       scrollToBottom();
     };
@@ -758,6 +779,7 @@
       }
 
       // Final render (clear cursor, attach actions).
+      streamDone = true; // neutralize any queued flush so it can't wipe math
       contentNode.classList.remove("cursor");
       contentNode.innerHTML = renderMarkdown(acc || "_(empty response)_");
       enhanceCode(contentNode);
