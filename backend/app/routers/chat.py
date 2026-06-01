@@ -118,6 +118,10 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
     conversation_id = convo.id
     title = convo.title
 
+    # Capture prior history BEFORE saving the new message, so the search-query
+    # rewriter sees the conversation context without the current message mixed in.
+    prior_history = crud.history_for_llm(db, conversation_id)
+
     # Persist the user's message, then assemble the LLM context.
     crud.add_message(db, conversation_id, "user", payload.message, model=None)
     crud.link_attachments(db, payload.attachment_ids, conversation_id)
@@ -126,12 +130,15 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
     search_context = None
     image_results: list = []
     did_search = False
+    want_images = _wants_images(payload.message)
     if _wants_search(payload.message, getattr(payload, "web_search", None)):
         did_search = True
         # Rewrite the chat message into a focused query using recent context,
-        # so follow-ups like "venue is wrong" become "IPL 2026 final venue".
-        history = crud.history_for_llm(db, conversation_id)
-        query = search.build_search_query(payload.message, history)
+        # so follow-ups like "images of it" resolve "it" to the real subject.
+        query = search.build_search_query(
+            payload.message, prior_history, for_images=want_images
+        )
+        logger.info("Search query: %r (from: %r)", query, payload.message)
         try:
             results = search.web_search(query)
             search_context = search.format_results_for_llm(query, results)
@@ -142,7 +149,7 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
                 "currently unavailable. Answer from general knowledge and note "
                 "you couldn't fetch live results."
             )
-        if _wants_images(payload.message):
+        if want_images:
             try:
                 image_results = search.image_search(query)
             except Exception as exc:  # noqa: BLE001

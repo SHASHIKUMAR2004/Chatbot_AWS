@@ -101,12 +101,17 @@ def format_results_for_llm(query: str, results: List[Dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def build_search_query(user_message: str, history: List[Dict[str, str]]) -> str:
+def build_search_query(
+    user_message: str,
+    history: List[Dict[str, str]],
+    for_images: bool = False,
+) -> str:
     """Rewrite a chat message into a focused web-search query using context.
 
-    The raw chat message is often a poor query ("venue is wrong I guess").
-    We ask the LLM to turn the message + recent context into a clean search
-    query. Falls back to the raw message if rewriting fails or LLM is off.
+    The raw chat message is often a poor query ("I want images of it"). We ask
+    the LLM to resolve references ("it", "that match", "yesterday") against the
+    recent conversation and produce a clean query. Falls back to the raw
+    message if rewriting fails or the LLM is off.
     """
     from . import llm  # local import to avoid a circular import at module load
 
@@ -116,32 +121,60 @@ def build_search_query(user_message: str, history: List[Dict[str, str]]) -> str:
     # Build a compact context string from the last few turns.
     recent = history[-6:]
     convo = "\n".join(
-        f"{m['role']}: {m['content'][:300]}"
+        f"{m['role']}: {m['content'][:400]}"
         for m in recent
         if isinstance(m.get("content"), str)
     )
+    kind = "image search" if for_images else "web search"
+    instruction = (
+        f"You convert a user's latest message into ONE concise {kind} query "
+        "(3-10 words). CRITICAL: resolve every vague reference using the "
+        "conversation context. Words like 'it', 'this', 'that', 'them', "
+        "'yesterday', 'the match', 'the topic' MUST be replaced with the actual "
+        "subject from the conversation. Output ONLY the query text — no quotes, "
+        "no labels, no explanation, no thinking."
+    )
+    examples = (
+        "Example:\n"
+        "Conversation:\nassistant: ...overview of neural network architectures "
+        "(CNN, RNN, Transformer)...\n"
+        "Latest message: I want images of it\n"
+        "Query: neural network architecture diagram\n\n"
+        "Example:\n"
+        "Conversation:\nuser: yesterday's IPL score\nassistant: RCB beat GT in "
+        "the final\n"
+        "Latest message: full scorecard of both sides\n"
+        "Query: IPL 2026 final RCB vs GT full scorecard\n\n"
+    )
     prompt = [
-        {
-            "role": "system",
-            "content": (
-                "You rewrite a user's latest message into a single, concise web "
-                "search query (max 12 words). Use the conversation context to "
-                "resolve references like 'yesterday', 'that match', or 'the venue'. "
-                "Output ONLY the query text, no quotes, no explanation."
-            ),
-        },
+        {"role": "system", "content": instruction + "\n\n" + examples},
         {
             "role": "user",
-            "content": f"Conversation:\n{convo}\n\nLatest message: {user_message}\n\nSearch query:",
+            "content": f"Conversation:\n{convo}\n\nLatest message: {user_message}\n\nQuery:",
         },
     ]
     try:
-        q = llm.complete(prompt, max_tokens=40).strip()
-        q = q.strip('"').splitlines()[0].strip()
-        # Sanity: if the model returned something empty or huge, fall back.
+        q = llm.complete(prompt, max_tokens=40, temperature=0.0).strip()
+        q = _clean_query(q)
         if not q or len(q) > 200:
             return user_message
         return q
     except Exception as exc:  # noqa: BLE001
         logger.warning("Query rewrite failed: %s", exc)
         return user_message
+
+
+def _clean_query(q: str) -> str:
+    """Strip reasoning, quotes, and labels a model might emit around a query."""
+    import re
+
+    # Remove <think>...</think> reasoning blocks some models emit.
+    q = re.sub(r"<think>.*?</think>", "", q, flags=re.DOTALL | re.IGNORECASE)
+    q = q.strip()
+    # Take the last non-empty line (models sometimes reason then answer).
+    lines = [ln.strip() for ln in q.splitlines() if ln.strip()]
+    if lines:
+        q = lines[-1]
+    # Drop a leading "Query:" label if present.
+    q = re.sub(r"^(query|search)\s*:\s*", "", q, flags=re.IGNORECASE)
+    return q.strip().strip('"').strip()

@@ -173,26 +173,50 @@
     }
     grid.innerHTML = "";
     images.forEach((im) => {
-      const a = document.createElement("a");
-      a.href = im.url || im.img_src;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      a.className = "img-grid__item";
-      a.title = im.title || "";
+      const tile = document.createElement("button");
+      tile.type = "button";
+      tile.className = "img-grid__item";
+      tile.title = im.title || "";
       const img = document.createElement("img");
       img.loading = "lazy";
       img.alt = "";
       // Remove the whole tile if the image fails to load (dead URL, hotlink
       // block, or not actually an image) — no broken-icon placeholders.
       img.onerror = () => {
-        a.remove();
+        tile.remove();
         if (!grid.querySelector(".img-grid__item")) grid.remove();
       };
       img.src = im.img_src;
-      a.appendChild(img);
-      grid.appendChild(a);
+      tile.appendChild(img);
+      // Click opens a full-size lightbox (not a redirect). Source link is inside.
+      tile.addEventListener("click", () => openLightbox(im));
+      grid.appendChild(tile);
     });
     scrollToBottom();
+  }
+
+  // Full-size image viewer (lightbox). Clicking a result opens this overlay;
+  // only the explicit "Visit source" link navigates away.
+  function openLightbox(im) {
+    const overlay = document.createElement("div");
+    overlay.className = "lightbox";
+    overlay.innerHTML = `
+      <div class="lightbox__inner">
+        <img class="lightbox__img" src="${im.img_src}" alt="${esc(im.title || "")}">
+        <div class="lightbox__bar">
+          <span class="lightbox__title">${esc(im.title || "")}</span>
+          <a class="lightbox__src" href="${im.url || im.img_src}" target="_blank" rel="noopener noreferrer">Visit source ↗</a>
+        </div>
+        <button class="lightbox__close" aria-label="Close">&times;</button>
+      </div>`;
+    const close = () => overlay.remove();
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay || e.target.classList.contains("lightbox__close")) close();
+    });
+    document.addEventListener("keydown", function onKey(e) {
+      if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); }
+    });
+    document.body.appendChild(overlay);
   }
 
   // ---------- API ----------

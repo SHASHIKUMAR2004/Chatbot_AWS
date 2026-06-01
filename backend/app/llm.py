@@ -109,13 +109,17 @@ def complete(messages: List[Dict[str, str]], model: str | None = None,
     client = _get_client()
     if client is None:
         return ""
-    resp = client.chat.completions.create(
+    base = dict(
         model=model or settings.default_model,
         messages=messages,
         max_tokens=max_tokens,
         temperature=temperature,
         stream=False,
     )
+    try:
+        resp = client.chat.completions.create(reasoning_format="hidden", **base)
+    except Exception:  # noqa: BLE001
+        resp = client.chat.completions.create(**base)
     return resp.choices[0].message.content or ""
 
 
@@ -192,20 +196,78 @@ def stream_chat(
         yield from _demo_stream(messages)
         return
 
-    completion = client.chat.completions.create(
+    # Reasoning models (GPT-OSS, etc.) can emit chain-of-thought. Ask Groq to
+    # keep it out of the content stream. Not all models accept this param, so
+    # fall back to a plain call if it's rejected.
+    create_kwargs = dict(
         model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=settings.default_max_tokens,
         stream=True,
     )
+    try:
+        completion = client.chat.completions.create(
+            reasoning_format="hidden", **create_kwargs
+        )
+    except Exception:  # noqa: BLE001 - param unsupported for this model
+        completion = client.chat.completions.create(**create_kwargs)
+
+    # Defensive second layer: strip any <think>...</think> that still streams
+    # through, without buffering the whole response.
+    in_think = False
+    buffer = ""
     for chunk in completion:
         try:
             delta = chunk.choices[0].delta.content
         except (AttributeError, IndexError):
             delta = None
-        if delta:
-            yield delta
+        if not delta:
+            continue
+        buffer += delta
+        # Process complete think-tag boundaries as they appear.
+        out, buffer, in_think = _strip_think(buffer, in_think)
+        if out:
+            yield out
+    # Flush any trailing buffered text that wasn't inside a think block.
+    if buffer and not in_think:
+        yield buffer
+
+
+def _strip_think(text: str, in_think: bool):
+    """Remove <think>...</think> spans from a streaming buffer.
+
+    Returns (emit, remaining_buffer, in_think). Keeps a small tail buffered in
+    case a tag is split across chunks.
+    """
+    out = []
+    i = 0
+    while i < len(text):
+        if not in_think:
+            start = text.find("<think>", i)
+            if start == -1:
+                # Emit up to a possible partial tag at the end.
+                tail = text[i:]
+                # Hold back the last few chars if they could begin "<think>".
+                hold = 0
+                for k in range(1, min(7, len(tail)) + 1):
+                    if "<think>".startswith(tail[-k:]):
+                        hold = k
+                if hold:
+                    out.append(tail[:-hold])
+                    return "".join(out), tail[-hold:], in_think
+                out.append(tail)
+                return "".join(out), "", in_think
+            out.append(text[i:start])
+            i = start + len("<think>")
+            in_think = True
+        else:
+            end = text.find("</think>", i)
+            if end == -1:
+                return "".join(out), "", True  # still inside think; drop it
+            i = end + len("</think>")
+            in_think = False
+    return "".join(out), "", in_think
 
 
 def _demo_stream(messages: List[Dict[str, object]]) -> Iterator[str]:
