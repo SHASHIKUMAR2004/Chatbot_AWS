@@ -15,6 +15,7 @@ class ChatRequest(BaseModel):
     system_prompt: Optional[str] = None
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     attachment_ids: List[str] = Field(default_factory=list)
+    web_search: Optional[bool] = None  # None = auto-detect, True/False = force
 
 
 # ---------- Attachments ----------

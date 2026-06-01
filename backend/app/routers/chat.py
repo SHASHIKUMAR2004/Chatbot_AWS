@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from .. import crud, llm
+from .. import crud, llm, search
 from ..config import settings
 from ..database import SessionLocal, get_db
 from ..schemas import ChatRequest, ChatResponse, ModelInfo
@@ -20,6 +20,31 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+# Heuristic: should we run a web search for this message? True when the user
+# explicitly asks, or uses words implying they want current/online info.
+_SEARCH_TRIGGERS = (
+    "search", "google", "look up", "lookup", "latest", "current", "news",
+    "today", "right now", "this week", "recent", "who won", "score",
+    "stock price", "weather", "release date", "find online", "browse",
+)
+_IMAGE_TRIGGERS = ("image", "images", "picture", "pictures", "photo", "photos",
+                   "pic", "pics", "show me", "wallpaper")
+
+
+def _wants_search(message: str, explicit: bool | None) -> bool:
+    if explicit is not None:
+        return explicit
+    if not settings.search_enabled:
+        return False
+    m = message.lower()
+    return any(t in m for t in _SEARCH_TRIGGERS) or _wants_images(message)
+
+
+def _wants_images(message: str) -> bool:
+    m = message.lower()
+    return any(t in m for t in _IMAGE_TRIGGERS)
 
 
 def _build_messages(db: Session, conversation_id: str, system_prompt: str | None):
@@ -96,7 +121,33 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
     # Persist the user's message, then assemble the LLM context.
     crud.add_message(db, conversation_id, "user", payload.message, model=None)
     crud.link_attachments(db, payload.attachment_ids, conversation_id)
+
+    # --- Optional web search (SearXNG) ---
+    search_context = None
+    image_results: list = []
+    did_search = False
+    if _wants_search(payload.message, getattr(payload, "web_search", None)):
+        did_search = True
+        try:
+            results = search.web_search(payload.message)
+            search_context = search.format_results_for_llm(payload.message, results)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Web search failed: %s", exc)
+            search_context = (
+                "A web search was attempted but the search service is "
+                "currently unavailable. Answer from general knowledge and note "
+                "you couldn't fetch live results."
+            )
+        if _wants_images(payload.message):
+            try:
+                image_results = search.image_search(payload.message)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Image search failed: %s", exc)
+
     messages, has_images = _build_messages(db, conversation_id, payload.system_prompt)
+    if search_context:
+        # Insert search results right after the system prompt.
+        messages.insert(1, {"role": "system", "content": search_context})
     model = _resolve_model(payload.model, has_images)
     temperature = (
         payload.temperature
@@ -112,8 +163,12 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
                 "title": title,
                 "model": model,
                 "is_new": is_new,
+                "searched": did_search,
             }
         )
+        # Send image results (if any) up front so the UI can render them.
+        if image_results:
+            yield _sse({"type": "images", "images": image_results})
         full = []
         try:
             for delta in llm.stream_chat(messages, model, temperature):

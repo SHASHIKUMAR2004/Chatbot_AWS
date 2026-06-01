@@ -23,6 +23,7 @@
     demo: false,
     assistantName: APP_NAME,
     pendingAttachments: [], // [{id, filename}]
+    webSearch: localStorage.getItem("chat.webSearch") === "1",
   };
 
   // ---------- DOM ----------
@@ -53,6 +54,7 @@
     send: $("sendBtn"),
     stop: $("stopBtn"),
     attachBtn: $("attachBtn"),
+    searchToggle: $("searchToggle"),
     fileInput: $("fileInput"),
     attachments: $("attachments"),
     scrollBtn: $("scrollBtn"),
@@ -154,6 +156,30 @@
     if (!span) return;
     span.textContent = ok ? "Copied!" : "Press Ctrl+C";
     setTimeout(() => (span.textContent = "Copy"), 1500);
+  }
+
+  // Render a grid of web image-search results into a message body (above text).
+  function renderImageGrid(contentNode, images) {
+    if (!images || !images.length) return;
+    const body = contentNode.closest(".msg__body") || contentNode.parentElement;
+    let grid = body.querySelector(".img-grid");
+    if (!grid) {
+      grid = document.createElement("div");
+      grid.className = "img-grid";
+      body.insertBefore(grid, contentNode); // images appear above the text
+    }
+    grid.innerHTML = "";
+    images.forEach((im) => {
+      const a = document.createElement("a");
+      a.href = im.url || im.img_src;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "img-grid__item";
+      a.title = im.title || "";
+      a.innerHTML = `<img loading="lazy" src="${im.img_src}" alt="${esc(im.title || "")}">`;
+      grid.appendChild(a);
+    });
+    scrollToBottom();
   }
 
   // ---------- API ----------
@@ -532,6 +558,9 @@
       body.appendChild(files);
     }
 
+    if (m.role === "assistant" && m.images && m.images.length) {
+      renderImageGrid(content, m.images);
+    }
     if (m.role === "assistant" && m.content) body.appendChild(assistantActions(m, content));
 
     wrap.append(avatar, body);
@@ -638,6 +667,7 @@
           conversation_id: state.currentId,
           model: state.model,
           attachment_ids: attachmentIds,
+          web_search: state.webSearch === true ? true : null,
         }),
         signal: state.abort.signal,
       });
@@ -660,12 +690,25 @@
           try { evt = JSON.parse(raw.slice(5).trim()); } catch (_) { continue; }
 
           if (evt.type === "meta") {
+            if (evt.searched) {
+              contentNode.innerHTML =
+                '<div class="searching">🔎 Searching the web…</div>';
+            }
             if (evt.is_new) {
               state.currentId = evt.conversation_id;
               await loadConversations();
             }
+          } else if (evt.type === "images") {
+            placeholder.images = evt.images || [];
+            renderImageGrid(contentNode, placeholder.images);
           } else if (evt.type === "delta") {
-            if (firstToken) { firstToken = false; contentNode.classList.remove("typing"); }
+            if (firstToken) {
+              firstToken = false;
+              contentNode.classList.remove("typing");
+              // Clear the "searching" placeholder once real tokens arrive.
+              const s = contentNode.querySelector(".searching");
+              if (s) s.remove();
+            }
             acc += evt.content;
             placeholder.content = acc;
             if (!renderQueued) { renderQueued = true; requestAnimationFrame(flush); }
@@ -805,6 +848,19 @@
     el.newChat.addEventListener("click", newChat);
 
     el.attachBtn.addEventListener("click", () => el.fileInput.click());
+
+    function reflectSearch() {
+      el.searchToggle.classList.toggle("is-active", state.webSearch);
+      el.searchToggle.setAttribute("aria-pressed", state.webSearch ? "true" : "false");
+      el.searchToggle.title = "Web search: " + (state.webSearch ? "on" : "off");
+    }
+    reflectSearch();
+    el.searchToggle.addEventListener("click", () => {
+      state.webSearch = !state.webSearch;
+      localStorage.setItem("chat.webSearch", state.webSearch ? "1" : "0");
+      reflectSearch();
+      toast(state.webSearch ? "Web search on" : "Web search off");
+    });
     el.fileInput.addEventListener("change", (e) => {
       uploadFiles(e.target.files);
       el.fileInput.value = ""; // allow re-selecting the same file

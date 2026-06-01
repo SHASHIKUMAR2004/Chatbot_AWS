@@ -15,12 +15,28 @@ services:
       # Persist the SQLite database (chat history) across restarts.
       - ./backend/data:/app/data
 
+    depends_on:
+      searxng:
+        condition: service_started
+
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # Self-hosted open-source metasearch engine. No API key, no tracking.
+  # Only reachable inside the docker network (not published to the host).
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    volumes:
+      - ./searxng:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    # No "ports:" — internal only. The backend reaches it at http://searxng:8080
 
   frontend:
     build: ./frontend
