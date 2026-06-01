@@ -55,7 +55,8 @@ class Settings(BaseSettings):
     # --- Web search (SearXNG, self-hosted) ---
     searxng_url: str = "http://searxng:8080"   # internal docker network address
     search_enabled: bool = True
-    search_results: int = 5          # text results fed to the model
+    search_results: int = 4          # text results fed to the model (keep small for TPM)
+    search_snippet_chars: int = 350  # cap each result's snippet to limit tokens
     search_image_results: int = 6    # image results returned to the UI
     search_timeout: float = 12.0
 

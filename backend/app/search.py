@@ -86,18 +86,24 @@ def image_search(query: str, limit: int | None = None) -> List[Dict[str, str]]:
 
 
 def format_results_for_llm(query: str, results: List[Dict[str, str]]) -> str:
-    """Turn text results into a context block the model can ground answers on."""
+    """Turn text results into a context block the model can ground answers on.
+
+    Snippets are capped (settings.search_snippet_chars) to keep the injected
+    context small, which matters for Groq's free-tier tokens-per-minute limit.
+    """
     if not results:
         return (
             f"A web search for '{query}' returned no results. Tell the user you "
             "couldn't find current information on this."
         )
+    cap = settings.search_snippet_chars
     lines = [
         f"Web search results for '{query}'. Use these to answer, and cite "
         "sources by their number like [1], [2]:\n"
     ]
     for i, r in enumerate(results, 1):
-        lines.append(f"[{i}] {r['title']}\n{r['url']}\n{r['content']}\n")
+        snippet = (r["content"] or "")[:cap]
+        lines.append(f"[{i}] {r['title']}\n{r['url']}\n{snippet}\n")
     return "\n".join(lines)
 
 
@@ -128,17 +134,21 @@ def build_search_query(
     kind = "image search" if for_images else "web search"
     instruction = (
         f"You convert a user's latest message into ONE concise {kind} query "
-        "(3-10 words). CRITICAL: resolve every vague reference using the "
-        "conversation context. Words like 'it', 'this', 'that', 'them', "
-        "'yesterday', 'the match', 'the topic' MUST be replaced with the actual "
-        "subject from the conversation. Output ONLY the query text — no quotes, "
-        "no labels, no explanation, no thinking."
+        "(3-10 words). CRITICAL RULES:\n"
+        "1. Resolve vague references ('it', 'this', 'that', 'them', 'yesterday', "
+        "'the match') using the conversation — replace them with the actual "
+        "subject being discussed.\n"
+        "2. The query MUST stay on the conversation's main topic. If earlier "
+        "turns are about a specific subject (e.g. neural networks), keep that "
+        "subject in the query even if the latest message uses a generic word.\n"
+        "3. Output ONLY the query text — no quotes, labels, explanation, or "
+        "thinking."
     )
     examples = (
         "Example:\n"
-        "Conversation:\nassistant: ...overview of neural network architectures "
-        "(CNN, RNN, Transformer)...\n"
-        "Latest message: I want images of it\n"
+        "Conversation:\nassistant: ...how neural networks learn, layers, "
+        "backpropagation...\n"
+        "Latest message: Architecture images of it\n"
         "Query: neural network architecture diagram\n\n"
         "Example:\n"
         "Conversation:\nuser: yesterday's IPL score\nassistant: RCB beat GT in "

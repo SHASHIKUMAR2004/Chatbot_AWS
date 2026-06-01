@@ -47,14 +47,15 @@ def _wants_images(message: str) -> bool:
     return any(t in m for t in _IMAGE_TRIGGERS)
 
 
-def _build_messages(db: Session, conversation_id: str, system_prompt: str | None):
+def _build_messages(db: Session, conversation_id: str, system_prompt: str | None,
+                    history_budget: int | None = None):
     system = system_prompt or settings.effective_system_prompt
     msgs = [{"role": "system", "content": system}]
     # Inject any attached-document text as a second system message.
     doc_context = crud.build_document_context(db, conversation_id)
     if doc_context:
         msgs.append({"role": "system", "content": doc_context})
-    msgs.extend(crud.history_for_llm(db, conversation_id))
+    msgs.extend(crud.history_for_llm(db, conversation_id, char_budget=history_budget))
 
     # Attach images (if any) to the most recent user message as image_url parts
     # so a vision model can see them.
@@ -155,7 +156,12 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Image search failed: %s", exc)
 
-    messages, has_images = _build_messages(db, conversation_id, payload.system_prompt)
+    # When search context is present it already adds significant tokens, so
+    # shrink the history budget to stay under the free-tier TPM limit.
+    hist_budget = 12000 if search_context else None
+    messages, has_images = _build_messages(
+        db, conversation_id, payload.system_prompt, history_budget=hist_budget
+    )
     if search_context:
         # Insert search results right after the system prompt.
         messages.insert(1, {"role": "system", "content": search_context})

@@ -96,14 +96,16 @@ def add_message(
 
 
 def history_for_llm(
-    db: Session, conversation_id: str, limit: int = settings.max_history_messages
+    db: Session, conversation_id: str,
+    limit: int = settings.max_history_messages,
+    char_budget: int | None = None,
 ) -> List[dict]:
     """Return the most recent messages (oldest-first) as LLM-ready dicts.
 
     In addition to the message-count limit, we enforce a character budget
-    (settings.max_prompt_chars) by dropping the oldest messages first. This
-    keeps requests under Groq's free-tier tokens-per-minute limit and prevents
-    the 413 'request too large' error on long conversations.
+    (settings.max_prompt_chars, or an override) by dropping the oldest messages
+    first. This keeps requests under Groq's free-tier tokens-per-minute limit
+    and prevents the 413 'request too large' error on long conversations.
     """
     stmt = (
         select(Message)
@@ -112,7 +114,7 @@ def history_for_llm(
         .limit(limit)
     )
     rows = list(db.scalars(stmt))  # newest-first
-    budget = settings.max_prompt_chars
+    budget = char_budget if char_budget is not None else settings.max_prompt_chars
     used = 0
     kept = []
     for m in rows:  # walk newest -> oldest, keep until budget is hit
