@@ -56,7 +56,7 @@ def web_search(query: str, limit: int | None = None) -> List[Dict[str, str]]:
 
 
 def image_search(query: str, limit: int | None = None) -> List[Dict[str, str]]:
-    """Return a list of {title, img_src, url} image results."""
+    """Return a list of {title, img_src, url} image results, filtering junk."""
     limit = limit or settings.search_image_results
     data = _get({"q": query, "categories": "images"})
     images = []
@@ -64,9 +64,15 @@ def image_search(query: str, limit: int | None = None) -> List[Dict[str, str]]:
         src = r.get("img_src") or r.get("thumbnail_src") or r.get("thumbnail")
         if not src:
             continue
-        # SearXNG sometimes returns protocol-relative or proxied paths.
         if src.startswith("//"):
             src = "https:" + src
+        low = src.lower()
+        # Skip non-displayable or junk sources: data URIs, favicons, svgs,
+        # and anything not served over http(s).
+        if low.startswith("data:") or not low.startswith("http"):
+            continue
+        if "favicon" in low or low.endswith(".svg"):
+            continue
         images.append(
             {
                 "title": (r.get("title") or "").strip(),
@@ -93,3 +99,49 @@ def format_results_for_llm(query: str, results: List[Dict[str, str]]) -> str:
     for i, r in enumerate(results, 1):
         lines.append(f"[{i}] {r['title']}\n{r['url']}\n{r['content']}\n")
     return "\n".join(lines)
+
+
+def build_search_query(user_message: str, history: List[Dict[str, str]]) -> str:
+    """Rewrite a chat message into a focused web-search query using context.
+
+    The raw chat message is often a poor query ("venue is wrong I guess").
+    We ask the LLM to turn the message + recent context into a clean search
+    query. Falls back to the raw message if rewriting fails or LLM is off.
+    """
+    from . import llm  # local import to avoid a circular import at module load
+
+    if not llm.llm_available():
+        return user_message
+
+    # Build a compact context string from the last few turns.
+    recent = history[-6:]
+    convo = "\n".join(
+        f"{m['role']}: {m['content'][:300]}"
+        for m in recent
+        if isinstance(m.get("content"), str)
+    )
+    prompt = [
+        {
+            "role": "system",
+            "content": (
+                "You rewrite a user's latest message into a single, concise web "
+                "search query (max 12 words). Use the conversation context to "
+                "resolve references like 'yesterday', 'that match', or 'the venue'. "
+                "Output ONLY the query text, no quotes, no explanation."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Conversation:\n{convo}\n\nLatest message: {user_message}\n\nSearch query:",
+        },
+    ]
+    try:
+        q = llm.complete(prompt, max_tokens=40).strip()
+        q = q.strip('"').splitlines()[0].strip()
+        # Sanity: if the model returned something empty or huge, fall back.
+        if not q or len(q) > 200:
+            return user_message
+        return q
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Query rewrite failed: %s", exc)
+        return user_message

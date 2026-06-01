@@ -523,3 +523,39 @@ body {
 }
 .img-grid__item img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .2s; }
 .img-grid__item:hover img { transform: scale(1.04); }
+
+/* ---- Composer "+" popup menu (upload + web search) ---- */
+.composer__plus { position: relative; flex-shrink: 0; }
+.attach-btn.is-open { color: var(--accent); background: var(--surface-3); }
+.attach-btn.search-on { color: var(--accent); }
+
+.plus-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  min-width: 230px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+  z-index: 50;
+  animation: plusMenuIn 0.12s ease-out;
+}
+@keyframes plusMenuIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.plus-menu__item {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 10px 12px;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text); font-family: var(--font-body); font-size: 14.5px;
+  border-radius: 9px; text-align: left;
+}
+.plus-menu__item:hover { background: var(--surface-2); }
+.plus-menu__item svg { color: var(--text-dim); flex-shrink: 0; }
+.plus-menu__item.is-active svg:first-child { color: var(--accent); }
+.plus-menu__item span { flex: 1; }
+.plus-menu__check { color: var(--accent) !important; }
+.plus-menu__sep { height: 1px; background: var(--border-soft); margin: 5px 8px; }

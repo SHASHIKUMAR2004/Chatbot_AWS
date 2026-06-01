@@ -97,6 +97,28 @@ def _get_client():
     return _client
 
 
+def llm_available() -> bool:
+    """True when a real Groq key is configured (not demo mode)."""
+    return settings.llm_enabled
+
+
+def complete(messages: List[Dict[str, str]], model: str | None = None,
+             max_tokens: int = 256, temperature: float = 0.2) -> str:
+    """Non-streaming single completion. Used for short utility tasks like
+    rewriting a search query. Returns "" in demo mode."""
+    client = _get_client()
+    if client is None:
+        return ""
+    resp = client.chat.completions.create(
+        model=model or settings.default_model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        stream=False,
+    )
+    return resp.choices[0].message.content or ""
+
+
 def _pretty_name(model_id: str) -> str:
     tail = model_id.split("/")[-1]
     return tail.replace("-", " ").title()

@@ -128,9 +128,13 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
     did_search = False
     if _wants_search(payload.message, getattr(payload, "web_search", None)):
         did_search = True
+        # Rewrite the chat message into a focused query using recent context,
+        # so follow-ups like "venue is wrong" become "IPL 2026 final venue".
+        history = crud.history_for_llm(db, conversation_id)
+        query = search.build_search_query(payload.message, history)
         try:
-            results = search.web_search(payload.message)
-            search_context = search.format_results_for_llm(payload.message, results)
+            results = search.web_search(query)
+            search_context = search.format_results_for_llm(query, results)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Web search failed: %s", exc)
             search_context = (
@@ -140,7 +144,7 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
             )
         if _wants_images(payload.message):
             try:
-                image_results = search.image_search(payload.message)
+                image_results = search.image_search(query)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Image search failed: %s", exc)
 
@@ -253,8 +257,19 @@ def _friendly_error(exc: Exception) -> str:
     low = msg.lower()
     if "api key" in low or "authentication" in low or "401" in low:
         return "Authentication failed. Check that GROQ_API_KEY is valid."
+    # Token-per-minute / request-too-large: the conversation or document is too
+    # big for this model's rate limit. Advise switching rather than truncating.
+    if "413" in low or "request too large" in low or "tokens per minute" in low or "tpm" in low:
+        return (
+            "This conversation is too large for the current model's rate limit. "
+            "Try switching to a model with a higher limit (e.g. GPT-OSS 120B) "
+            "using the model selector at the top, or start a new chat."
+        )
     if "rate limit" in low or "429" in low:
-        return "Rate limit reached. Please wait a moment and try again."
+        return (
+            "Rate limit reached. Please wait a few seconds and try again, or "
+            "switch to a different model from the selector at the top."
+        )
     if "model" in low and ("decommission" in low or "not found" in low or "404" in low):
         return "That model is unavailable. Try selecting a different one."
     if "timeout" in low or "timed out" in low:

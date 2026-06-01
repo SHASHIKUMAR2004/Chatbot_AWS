@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # --- Groq / LLM ---
     groq_api_key: str | None = None
-    default_model: str = "llama-3.3-70b-versatile"
+    default_model: str = "openai/gpt-oss-120b"
     # Vision-capable model used automatically when an image is attached.
     vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     default_temperature: float = 0.7
@@ -35,12 +35,13 @@ class Settings(BaseSettings):
     )
 
     # How many of the most recent messages to send back as context.
-    # Kept modest to stay under Groq free-tier tokens-per-minute (TPM) limits.
-    max_history_messages: int = 12
-    # Hard cap on characters sent to the model per request (history + docs).
-    # ~4 chars/token, so 20000 chars ~= 5000 tokens, safely under the 6000 TPM
-    # free-tier limit on small models. Oldest history is dropped first.
-    max_prompt_chars: int = 20000
+    # gpt-oss-120b has a 128K context window, so we can keep generous history.
+    max_history_messages: int = 30
+    # Soft cap on characters of history per request. Large enough to keep
+    # conversations coherent; if a model's TPM limit is still exceeded, the
+    # backend surfaces a clear "switch model" message instead of silently
+    # dropping context. Oldest history is dropped first only past this cap.
+    max_prompt_chars: int = 60000
 
     # --- File uploads / document context ---
     max_upload_mb: int = 100         # reject files larger than this

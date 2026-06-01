@@ -53,8 +53,11 @@
     input: $("input"),
     send: $("sendBtn"),
     stop: $("stopBtn"),
-    attachBtn: $("attachBtn"),
-    searchToggle: $("searchToggle"),
+    plusBtn: $("plusBtn"),
+    plusMenu: $("plusMenu"),
+    menuUpload: $("menuUpload"),
+    menuSearch: $("menuSearch"),
+    menuSearchCheck: $("menuSearchCheck"),
     fileInput: $("fileInput"),
     attachments: $("attachments"),
     scrollBtn: $("scrollBtn"),
@@ -176,7 +179,17 @@
       a.rel = "noopener noreferrer";
       a.className = "img-grid__item";
       a.title = im.title || "";
-      a.innerHTML = `<img loading="lazy" src="${im.img_src}" alt="${esc(im.title || "")}">`;
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.alt = "";
+      // Remove the whole tile if the image fails to load (dead URL, hotlink
+      // block, or not actually an image) — no broken-icon placeholders.
+      img.onerror = () => {
+        a.remove();
+        if (!grid.querySelector(".img-grid__item")) grid.remove();
+      };
+      img.src = im.img_src;
+      a.appendChild(img);
       grid.appendChild(a);
     });
     scrollToBottom();
@@ -847,19 +860,53 @@
     el.stop.addEventListener("click", stopGeneration);
     el.newChat.addEventListener("click", newChat);
 
-    el.attachBtn.addEventListener("click", () => el.fileInput.click());
-
+    // ---- "+" menu (upload + web search toggle), ChatGPT-style ----
+    const openPlusMenu = () => {
+      el.plusMenu.hidden = false;
+      el.plusBtn.setAttribute("aria-expanded", "true");
+      el.plusBtn.classList.add("is-open");
+    };
+    const closePlusMenu = () => {
+      el.plusMenu.hidden = true;
+      el.plusBtn.setAttribute("aria-expanded", "false");
+      el.plusBtn.classList.remove("is-open");
+    };
     function reflectSearch() {
-      el.searchToggle.classList.toggle("is-active", state.webSearch);
-      el.searchToggle.setAttribute("aria-pressed", state.webSearch ? "true" : "false");
-      el.searchToggle.title = "Web search: " + (state.webSearch ? "on" : "off");
+      const on = state.webSearch;
+      el.menuSearch.setAttribute("aria-checked", on ? "true" : "false");
+      el.menuSearch.classList.toggle("is-active", on);
+      el.menuSearchCheck.style.display = on ? "block" : "none";
+      if (on) el.menuSearchCheck.removeAttribute("hidden");
+      else el.menuSearchCheck.setAttribute("hidden", "");
+      // Subtle hint on the + button itself when search is armed.
+      el.plusBtn.classList.toggle("search-on", on);
     }
     reflectSearch();
-    el.searchToggle.addEventListener("click", () => {
+
+    el.plusBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      el.plusMenu.hidden ? openPlusMenu() : closePlusMenu();
+    });
+    el.menuUpload.addEventListener("click", () => {
+      closePlusMenu();
+      el.fileInput.click();
+    });
+    el.menuSearch.addEventListener("click", () => {
       state.webSearch = !state.webSearch;
       localStorage.setItem("chat.webSearch", state.webSearch ? "1" : "0");
       reflectSearch();
-      toast(state.webSearch ? "Web search on" : "Web search off");
+      // Keep the menu open so the user sees the toggle change, ChatGPT-style.
+    });
+    // Close the menu when clicking outside it.
+    document.addEventListener("click", (e) => {
+      if (!el.plusMenu.hidden &&
+          !el.plusMenu.contains(e.target) &&
+          !el.plusBtn.contains(e.target)) {
+        closePlusMenu();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !el.plusMenu.hidden) closePlusMenu();
     });
     el.fileInput.addEventListener("change", (e) => {
       uploadFiles(e.target.files);
